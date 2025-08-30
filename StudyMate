@@ -1,0 +1,90 @@
+# ===============================
+# 📘 StudyMate - AI Study Assistant
+# Google Colab Compatible Code
+# ===============================
+
+# Install required libraries
+!pip install transformers sentencepiece datasets pdfplumber python-docx
+
+# Import libraries
+import pdfplumber
+import docx
+from transformers import pipeline
+from google.colab import files
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+
+
+# =================================
+# 📂 Step 1: Upload Study Material
+# =================================
+uploaded = files.upload()
+
+# Read uploaded file
+file_name = list(uploaded.keys())[0]
+
+text = ""
+
+if file_name.endswith(".txt"):
+    with open(file_name, "r", encoding="utf-8") as f:
+        text = f.read()
+
+elif file_name.endswith(".pdf"):
+    with pdfplumber.open(file_name) as pdf:
+        for page in pdf.pages:
+            text += page.extract_text() + "\n"
+
+elif file_name.endswith(".docx"):
+    doc = docx.Document(file_name)
+    for para in doc.paragraphs:
+        text += para.text + "\n"
+
+else:
+    print("❌ Unsupported file format. Please upload .txt, .pdf, or .docx")
+
+# Show first 500 characters of input text
+print("📄 Extracted Text Preview:\n", text[:500])
+
+
+# =================================
+# 📘 Step 2: Summarization
+# =================================
+print("\n🔄 Generating Summary...")
+
+summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
+
+# Adjust max_length based on the text length, but keep it within reasonable limits for summarization
+summary = summarizer(text, max_length=min(len(text)//2, 500), min_length=40, do_sample=False)
+
+print("\n✅ Summary:\n", summary[0]['summary_text'])
+
+
+# =================================
+# 📘 Step 3: Question Generation
+# =================================
+print("\n🔄 Generating Questions...")
+
+# Using a QG model from HuggingFace
+qg_model_name = "iarfmoose/t5-base-question-generator"
+tokenizer = AutoTokenizer.from_pretrained(qg_model_name)
+model = AutoModelForSeq2SeqLM.from_pretrained(qg_model_name)
+
+def generate_questions(text, num_questions=5, max_chunk_length=500):
+    questions = []
+    # Split text into chunks
+    chunks = [text[i:i + max_chunk_length] for i in range(0, len(text), max_chunk_length)]
+
+    for chunk in chunks:
+        input_text = "generate questions: " + chunk
+        inputs = tokenizer.encode(input_text, return_tensors="pt", max_length=512, truncation=True)
+        outputs = model.generate(inputs, max_length=64, num_beams=num_questions, early_stopping=True, num_return_sequences=num_questions)
+        chunk_questions = [tokenizer.decode(out, skip_special_tokens=True) for out in outputs]
+        questions.extend(chunk_questions)
+
+    return questions
+
+# Generate questions from the full text, split into chunks
+questions = generate_questions(text, num_questions=5, max_chunk_length=500)
+
+print("\n✅ Sample Questions:")
+for i, q in enumerate(questions[:10], 1): # Displaying up to 10 questions to avoid clutter
+    print(f"{i}. {q}")
